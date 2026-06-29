@@ -240,6 +240,7 @@ const VERIFY_ENDPOINT = "https://paystacktest.vercel.app/api/verify";
 const CURRENT_SESSION = "2025/2026";
 const TERMS = ["First","Second","Third"];
 const SCHOOL_NAME = "School Management System";
+const SCHOOL_EMAIL_DOMAIN = "brightonheights.edu.ng"; // fallback email domain if student has no parent email
 
 /* ============ SESSION ============ */
 let student = null; // { id, regNumber, name, class, subjects, parentName, parentPhone, parentEmail, address, dob, gender, bloodGroup, genotype }
@@ -585,7 +586,11 @@ window.payNow = function(term, itemName, amount, type){
     return;
   }
 
-  const email = student.parentEmail || `${(student.regNumber||'student').replace(/[^a-zA-Z0-9]/g,'').toLowerCase()}@studentportal.local`;
+  // Build a valid fallback email Paystack will accept
+  const rawReg = (student.regNumber||'student').replace(/[^a-zA-Z0-9]/g,'').toLowerCase();
+  const email = (student.parentEmail && student.parentEmail.includes('@'))
+    ? student.parentEmail
+    : `${rawReg}@${SCHOOL_EMAIL_DOMAIN}`;
 
   const handler = window.PaystackPop.setup({
     key: PAYSTACK_PUBLIC_KEY,
@@ -622,28 +627,36 @@ async function verifyAndRecordPayment(reference, term, itemName, amount, type){
   }
   showToast('Verifying payment…', 'success');
   try{
-    const verifyRes = await fetch(VERIFY_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reference })
-    });
-    const verifyData = await verifyRes.json();
+    let confirmedAmount = amount; // default to what was charged
+    let verifyStatus = 'pending'; // will upgrade to 'success' if verify passes
 
-    if(!verifyRes.ok || !verifyData.status){
-      showToast('Payment verification failed. Contact the school office with reference: '+reference, 'error');
-      return;
+    try{
+      const verifyRes = await fetch(VERIFY_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reference })
+      });
+      const verifyData = await verifyRes.json();
+
+      if(verifyRes.ok && verifyData.status){
+        const verifiedAmountKobo = verifyData.data?.amount;
+        const expectedKobo = Math.round(amount * 100);
+        if(!verifiedAmountKobo || verifiedAmountKobo === expectedKobo){
+          // Amount matches (or server didn't return amount) — treat as confirmed
+          confirmedAmount = verifiedAmountKobo ? verifiedAmountKobo / 100 : amount;
+          verifyStatus = 'success';
+        } else {
+          // Amount mismatch — record as needs_review for admin
+          verifyStatus = 'needs_review';
+        }
+      }
+      // If verifyRes not ok, we still record with pending status below
+    } catch(verifyErr){
+      // Verify endpoint unreachable — record payment as pending for admin to confirm
+      console.warn('Verify endpoint failed:', verifyErr.message);
     }
 
-    // Validate the verified amount matches what was expected
-    const verifiedAmountKobo = verifyData.data?.amount;
-    const expectedKobo = Math.round(amount * 100);
-    if(verifiedAmountKobo && verifiedAmountKobo !== expectedKobo){
-      showToast('Payment amount mismatch. Contact the school office with reference: '+reference, 'error');
-      return;
-    }
-    // Use server-confirmed amount (in naira) for the record
-    const confirmedAmount = verifiedAmountKobo ? verifiedAmountKobo / 100 : amount;
-
+    // Always record the payment so the student is not left without a record
     await addDoc(collection(db,'payments'), {
       studentId: student.id,
       regNumber: student.regNumber,
@@ -655,14 +668,20 @@ async function verifyAndRecordPayment(reference, term, itemName, amount, type){
       itemName,
       amount: confirmedAmount,
       reference,
-      status: 'success',
+      status: verifyStatus,
       date: serverTimestamp()
     });
 
-    showToast('Payment successful!', 'success');
+    if(verifyStatus === 'success'){
+      showToast('Payment successful!', 'success');
+    } else if(verifyStatus === 'needs_review'){
+      showToast('Payment recorded — amount will be confirmed by the school office (Ref: '+reference+')', 'success');
+    } else {
+      showToast('Payment recorded and pending confirmation. Reference: '+reference, 'success');
+    }
     loadPayments();
   } catch(e){
-    showToast('Verification request failed: '+e.message, 'error');
+    showToast('Payment was made but could not be saved. Please provide this reference to the school office: '+reference, 'error');
   }
 }
 
