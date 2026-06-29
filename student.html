@@ -540,9 +540,13 @@ function renderPayments(feeBlocks){
       const amountStr = '₦' + (item.amount||0).toLocaleString();
       const actionHtml = isPaid
         ? `<span class="badge b-green">PAID</span>
-           <button class="btn btn-edit btn-sm" onclick="openReceipt('${payment.id}')">View Receipt</button>`
+           <button class="btn btn-edit btn-sm pay-receipt-btn" data-id="${payment.id}">View Receipt</button>`
         : `<span class="badge b-red">UNPAID</span>
-           <button class="btn btn-p btn-sm" onclick="payNow('${term}', ${JSON.stringify(item.itemName)}, ${item.amount}, '${item.type}')">Pay Now</button>`;
+           <button class="btn btn-p btn-sm pay-now-btn"
+             data-term="${escapeAttr(term)}"
+             data-item="${escapeAttr(item.itemName)}"
+             data-amount="${item.amount}"
+             data-type="${escapeAttr(item.type)}">Pay Now</button>`;
       return `<div class="fee-item">
         <div class="fee-item-l"><strong>${escapeHtml(item.itemName)}</strong><span>${amountStr}</span></div>
         <div class="fee-item-r">${actionHtml}</div>
@@ -564,7 +568,12 @@ window.payNow = function(term, itemName, amount, type){
     return;
   }
   if(!window.PaystackPop){
-    showToast('Payment service failed to load. Check your connection.', 'error');
+    // Paystack CDN may still be loading — retry once after a short delay
+    showToast('Payment service loading, please wait…', 'error');
+    setTimeout(function(){
+      if(window.PaystackPop){ payNow(term, itemName, amount, type); }
+      else { showToast('Payment service failed to load. Check your internet connection and refresh.', 'error'); }
+    }, 2000);
     return;
   }
   if(_paymentInProgress){
@@ -674,6 +683,21 @@ window.openReceipt = function(paymentId){
 
   document.getElementById('moReceipt').classList.add('open');
 };
+/* Event delegation for dynamically-rendered payment buttons */
+document.getElementById('payContainer').addEventListener('click', function(e){
+  const payBtn = e.target.closest('.pay-now-btn');
+  const rcptBtn = e.target.closest('.pay-receipt-btn');
+  if(payBtn){
+    const term   = payBtn.dataset.term;
+    const item   = payBtn.dataset.item;
+    const amount = Number(payBtn.dataset.amount);
+    const type   = payBtn.dataset.type;
+    payNow(term, item, amount, type);
+  } else if(rcptBtn){
+    openReceipt(rcptBtn.dataset.id);
+  }
+});
+
 document.getElementById('closeReceiptBtn').addEventListener('click', ()=> document.getElementById('moReceipt').classList.remove('open'));
 document.getElementById('printReceiptBtn').addEventListener('click', ()=>{
   document.body.classList.add('printing-modal');

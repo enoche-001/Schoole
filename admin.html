@@ -4,7 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <meta name="robots" content="noindex,nofollow"/>
-<title>Admin Portal</title>
+<title>Admin Portal — School Management</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="admin.css"/>
 </head>
@@ -1579,6 +1579,12 @@ async function loadPayments(){
     try {
       const snap2 = await getDocs(collection(db,'payments'));
       allPayments = snap2.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Sort client-side when Firestore index is missing
+      allPayments.sort((a,b)=>{
+        const da = a.date?.toMillis ? a.date.toMillis() : (a.date ? new Date(a.date).getTime() : 0);
+        const db2 = b.date?.toMillis ? b.date.toMillis() : (b.date ? new Date(b.date).getTime() : 0);
+        return db2 - da;
+      });
     } catch(e2) {
       allPayments = [];
     }
